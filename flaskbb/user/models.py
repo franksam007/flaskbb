@@ -113,7 +113,7 @@ class User(db.Model, UserMixin, CRUDMixin):
     activated = db.Column(db.Boolean, default=False, nullable=False)
 
     theme = db.Column(db.String(15), nullable=True)
-    language = db.Column(db.String(15), default="en", nullable=True)
+    language = db.Column(db.String(15), default="zh", nullable=True)
 
     posts = db.relationship("Post", backref="user", lazy="dynamic", primaryjoin="User.id == Post.user_id")
     topics = db.relationship("Topic", backref="user", lazy="dynamic", primaryjoin="User.id == Topic.user_id")
