@@ -23,22 +23,16 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from flaskbb._compat import iteritems, string_types
-from flaskbb.auth.views import auth
 # extensions
 from flaskbb.extensions import (alembic, allows, babel, cache, celery, csrf,
                                 db, debugtoolbar, limiter, login_manager, mail,
                                 redis_store, themes, whooshee)
-from flaskbb.forum.views import forum
-from flaskbb.management.views import management
-from flaskbb.message.views import message
 from flaskbb.plugins import spec
 from flaskbb.plugins.manager import FlaskBBPluginManager
 from flaskbb.plugins.models import PluginRegistry
 from flaskbb.plugins.utils import remove_zombie_plugins_from_db, template_hook
 # models
 from flaskbb.user.models import Guest, User
-# views
-from flaskbb.user.views import user
 # various helpers
 from flaskbb.utils.helpers import (app_config_from_env, crop_title,
                                    format_date, forum_is_unread,
@@ -59,6 +53,11 @@ from flaskbb.utils.search import (ForumWhoosheer, PostWhoosheer,
 from flaskbb.utils.settings import flaskbb_config
 from flaskbb.utils.translations import FlaskBBDomain
 
+from .auth import views as auth_views
+from .forum import views as forum_views
+from .management import views as management_views
+from .user import views as user_views
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,9 +77,7 @@ def create_app(config=None, instance_path=None):
     """
 
     app = Flask(
-        "flaskbb",
-        instance_path=instance_path,
-        instance_relative_config=True
+        "flaskbb", instance_path=instance_path, instance_relative_config=True
     )
 
     # instance folders are not automatically created by flask
@@ -149,23 +146,15 @@ def configure_celery_app(app, celery):
     TaskBase = celery.Task
 
     class ContextTask(TaskBase):
+
         def __call__(self, *args, **kwargs):
             with app.app_context():
                 return TaskBase.__call__(self, *args, **kwargs)
+
     celery.Task = ContextTask
 
 
 def configure_blueprints(app):
-    app.register_blueprint(forum, url_prefix=app.config["FORUM_URL_PREFIX"])
-    app.register_blueprint(user, url_prefix=app.config["USER_URL_PREFIX"])
-    app.register_blueprint(auth, url_prefix=app.config["AUTH_URL_PREFIX"])
-    app.register_blueprint(
-        management, url_prefix=app.config["ADMIN_URL_PREFIX"]
-    )
-    app.register_blueprint(
-        message, url_prefix=app.config["MESSAGE_URL_PREFIX"]
-    )
-
     app.pluggy.hook.flaskbb_load_blueprints(app=app)
 
 
@@ -219,7 +208,6 @@ def configure_extensions(app):
     @login_manager.user_loader
     def load_user(user_id):
         """Loads the user. Required by the `login` extension."""
-
         user_instance = User.query.filter_by(id=user_id).first()
         if user_instance:
             return user_instance
@@ -253,9 +241,9 @@ def configure_template_filters(app):
         ('can_ban_user', CanBanUser),
     ]
 
-    filters.update([
-        (name, partial(perm, request=request)) for name, perm in permissions
-    ])
+    filters.update(
+        [(name, partial(perm, request=request)) for name, perm in permissions]
+    )
 
     # these create closures
     filters['can_moderate'] = TplCanModerate(request)
@@ -301,6 +289,7 @@ def configure_before_handlers(app):
             db.session.commit()
 
     if app.config["REDIS_ENABLED"]:
+
         @app.before_request
         def mark_current_user_online():
             if current_user.is_authenticated:
@@ -427,8 +416,15 @@ def load_plugins(app):
             plugins = PluginRegistry.query.all()
 
     except (OperationalError, ProgrammingError) as exc:
-        logger.debug("Database is not setup correctly or has not been "
-                     "setup yet.", exc_info=exc)
+        logger.debug(
+            "Database is not setup correctly or has not been "
+            "setup yet.",
+            exc_info=exc
+        )
+        # load plugins even though the database isn't setup correctly
+        # i.e. when creating the initial database and wanting to install
+        # the plugins migration as well
+        app.pluggy.load_setuptools_entrypoints('flaskbb_plugins')
         return
 
     for plugin in plugins:
@@ -441,7 +437,8 @@ def load_plugins(app):
     loaded_names = set([p[0] for p in app.pluggy.list_name_plugin()])
     registered_names = set([p.name for p in plugins])
     unregistered = [
-        PluginRegistry(name=name) for name in loaded_names - registered_names
+        PluginRegistry(name=name)
+        for name in loaded_names - registered_names
         # ignore internal FlaskBB modules
         if not name.startswith('flaskbb.') and name != 'flaskbb'
     ]
